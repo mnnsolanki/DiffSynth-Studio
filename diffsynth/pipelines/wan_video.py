@@ -27,6 +27,7 @@ from ..models.wan_video_animate_adapter import WanAnimateAdapter
 from ..models.wan_video_mot import MotWanModel
 from ..models.wav2vec import WanS2VAudioEncoder
 from ..models.longcat_video_dit import LongCatVideoTransformer3DModel
+from ..models.face_identity import FaceConditioningBlock
 
 
 class WanVideoPipeline(BasePipeline):
@@ -50,12 +51,14 @@ class WanVideoPipeline(BasePipeline):
         self.vap: MotWanModel = None
         self.animate_adapter: WanAnimateAdapter = None
         self.audio_encoder: WanS2VAudioEncoder = None
+        self.face_conditioning_block: FaceConditioningBlock = None
         self.in_iteration_models = ("dit", "motion_controller", "vace", "animate_adapter", "vap")
         self.in_iteration_models_2 = ("dit2", "motion_controller", "vace2", "animate_adapter", "vap")
         self.units = [
             WanVideoUnit_ShapeChecker(),
             WanVideoUnit_NoiseInitializer(),
             WanVideoUnit_PromptEmbedder(),
+            WanVideoUnit_FaceEmbedding(),
             WanVideoUnit_S2V(),
             WanVideoUnit_InputVideoEmbedder(),
             WanVideoUnit_ImageEmbedderVAE(),
@@ -75,6 +78,7 @@ class WanVideoPipeline(BasePipeline):
             WanVideoUnit_TeaCache(),
             WanVideoUnit_CfgMerger(),
             WanVideoUnit_LongCatVideo(),
+            WanVideoUnit_FaceIdentityLora(),
         ]
         self.post_units = [
             WanVideoPostUnit_S2V(),
@@ -206,6 +210,10 @@ class WanVideoPipeline(BasePipeline):
         vace_video_mask: Optional[Image.Image] = None,
         vace_reference_image: Optional[Image.Image] = None,
         vace_scale: Optional[float] = 1.0,
+        # Face identity
+        face_embedding: Optional[torch.Tensor] = None,
+        face_scale: Optional[float] = 1.0,
+        face_identity_lora_path: Optional[str] = None,
         # Animate
         animate_pose_video: Optional[list[Image.Image]] = None,
         animate_face_video: Optional[list[Image.Image]] = None,
@@ -269,6 +277,7 @@ class WanVideoPipeline(BasePipeline):
             "control_video": control_video, "reference_image": reference_image,
             "camera_control_direction": camera_control_direction, "camera_control_speed": camera_control_speed, "camera_control_origin": camera_control_origin,
             "vace_video": vace_video, "vace_video_mask": vace_video_mask, "vace_reference_image": vace_reference_image, "vace_scale": vace_scale,
+            "face_embedding": face_embedding, "face_scale": face_scale, "face_identity_lora_path": face_identity_lora_path,
             "seed": seed, "rand_device": rand_device,
             "height": height, "width": width, "num_frames": num_frames,
             "cfg_scale": cfg_scale, "cfg_merge": cfg_merge,
@@ -1138,6 +1147,8 @@ def model_fn_wan_video(
     reference_latents = None,
     vace_context = None,
     vace_scale = 1.0,
+    face_conditioning = None,
+    face_scale = 1.0,
     audio_embeds: Optional[torch.Tensor] = None,
     motion_latents: Optional[torch.Tensor] = None,
     s2v_pose_latents: Optional[torch.Tensor] = None,
@@ -1278,6 +1289,23 @@ def model_fn_wan_video(
         dit.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
         dit.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
     ], dim=-1).reshape(f * h * w, 1, -1).to(x.device)
+
+    # Face Identity Conditioning
+    if face_conditioning is not None:
+        # Project face embedding to context space and blend with text context
+        if face_conditioning.dim() == 1:
+            face_conditioning = face_conditioning.unsqueeze(0)
+        if face_conditioning.shape[0] != context.shape[0]:
+            face_conditioning = face_conditioning.expand(context.shape[0], -1)
+        
+        # Blend face conditioning with text context using scale
+        # face_scale controls how much the face embedding influences the generation
+        face_embedding_proj = face_conditioning * face_scale
+        
+        # Add face embedding as additional context token
+        if context.shape[1] > 0:
+            # Append face embedding to context
+            context = torch.cat([context, face_embedding_proj.unsqueeze(1)], dim=1)
 
     # VAP 
     if vap is not None:
@@ -1523,3 +1551,91 @@ def model_fn_wans2v(
     # make compatible with wan video
     x = torch.cat([origin_ref_latents, x], dim=2)
     return x
+
+
+# ======================== Face Identity Units ========================
+
+class WanVideoUnit_FaceEmbedding(PipelineUnit):
+    """
+    Process face identity embeddings for conditioning.
+    
+    This unit handles:
+    1. Loading or computing face embeddings
+    2. Projecting them to the model's conditioning space
+    3. Scaling and normalizing for stable training/inference
+    """
+    
+    def __init__(self):
+        super().__init__(
+            input_params=("face_embedding", "face_scale"),
+            output_params=("face_conditioning", "face_scale"),
+            onload_model_names=("face_conditioning_block",)
+        )
+    
+    def process(self, pipe, face_embedding, face_scale):
+        """
+        Process face embedding into conditioning.
+        
+        Args:
+            pipe: WanVideoPipeline instance
+            face_embedding: Tensor of shape (embedding_dim,) or (B, embedding_dim)
+            face_scale: Scaling factor for face conditioning
+            
+        Returns:
+            Dictionary with face_conditioning and face_scale
+        """
+        if face_embedding is None:
+            return {"face_conditioning": None, "face_scale": face_scale}
+        
+        # Ensure model is loaded
+        if hasattr(pipe, 'face_conditioning_block') and pipe.face_conditioning_block is not None:
+            pipe.load_models_to_device(self.onload_model_names)
+            
+            # Move embedding to device and correct dtype
+            face_embedding = face_embedding.to(pipe.device).to(pipe.torch_dtype)
+            
+            # Process through face conditioning block
+            face_conditioning = pipe.face_conditioning_block(face_embedding)
+            face_conditioning = face_conditioning.to(dtype=pipe.torch_dtype, device=pipe.device)
+            
+            return {"face_conditioning": face_conditioning, "face_scale": face_scale}
+        
+        return {"face_conditioning": None, "face_scale": face_scale}
+
+
+class WanVideoUnit_FaceIdentityLora(PipelineUnit):
+    """
+    Load and apply face identity LoRA weights.
+    
+    Handles loading pre-trained face identity LoRA adapters that were
+    trained on specific face identities.
+    """
+    
+    def __init__(self):
+        super().__init__(
+            input_params=("face_identity_lora_path",),
+            output_params=(),
+        )
+    
+    def process(self, pipe, face_identity_lora_path):
+        """
+        Load face identity LoRA.
+        
+        Args:
+            pipe: WanVideoPipeline instance
+            face_identity_lora_path: Path to saved LoRA weights
+            
+        Returns:
+            Empty dictionary (LoRA is applied in-place)
+        """
+        if face_identity_lora_path is None:
+            return {}
+        
+        if hasattr(pipe, 'face_conditioning_block') and pipe.face_conditioning_block is not None:
+            try:
+                lora_state = torch.load(face_identity_lora_path, map_location=pipe.device)
+                pipe.face_conditioning_block.load_state_dict(lora_state, strict=False)
+            except Exception as e:
+                print(f"Warning: Could not load face identity LoRA from {face_identity_lora_path}: {e}")
+        
+        return {}

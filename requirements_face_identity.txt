@@ -1,0 +1,14 @@
+# Additional Requirements for Face Identity Training
+# Install with: pip install -r requirements_face_identity.txt
+
+# Core dependencies for face embedding extraction
+transformers>=4.30.0  # For CLIP model
+timm>=0.9.0           # For DINOv3 (optional)
+
+# Already included in DiffSynth-Studio but listed for clarity:
+# torch>=2.0.0
+# torchvision>=0.15.0
+# pillow>=9.0.0
+# numpy>=1.23.0
+# einops>=0.6.0
+# tqdm>=4.64.0
