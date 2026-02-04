@@ -1,11 +1,10 @@
 import torch
 import wandb
 from datetime import datetime
-from PIL import Image
 from diffsynth.utils.data import save_video, VideoData
 from diffsynth.pipelines.wan_video import WanVideoPipeline, ModelConfig
 
-ALPHA=1
+ALPHA=2
 
 PROMPT="""
 A man is dancing by following the pose video exactly. Natural and smooth movements.
@@ -43,7 +42,7 @@ pipe = WanVideoPipeline.from_pretrained(
 )
 pipe.load_lora(pipe.vace, "models/train/Wan2.1-VACE-1.3B_lora/step-2800.safetensors", alpha=ALPHA)
 
-video = VideoData("data_infer/processed/pose/dance-1_1_pose.mp4", height=480, width=832)
+video = VideoData("data_infer/processed/pose/dance-2_1_pose.mp4", height=480, width=832)
 video = [video[i] for i in range(65)]
 
 ref_img = VideoData("data_infer/ref_img.jpg", height=480, width=832)[0]
@@ -64,10 +63,15 @@ video = pipe(
 )
 save_video(video, "lora_dance.mp4", fps=15, quality=9)
 
-# Log the video to W&B
+# Log the video to W&B with proper format
 wandb.log({
-    "generated_video": wandb.Video("lora_dance.mp4", fps=15),
+    "generated_video": wandb.Video("lora_dance.mp4", format="mp4"),
     "alpha": ALPHA,
+})
+
+# Also log video with caption for better visualization in charts
+wandb.log({
+    "video_output": wandb.Video("lora_dance.mp4", format="mp4", caption=f"Generated dance video - Alpha: {ALPHA}")
 })
 
 # Finish the W&B run
