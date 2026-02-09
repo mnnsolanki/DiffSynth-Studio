@@ -14,9 +14,9 @@ accelerate launch --mixed_precision="bf16" --num_processes=1 --num_machines=1  e
   --save_steps 100 \
   --remove_prefix_in_ckpt "pipe.vace." \
   --output_path "./models/train/Wan2.1-VACE-1.3B_lora" \
-  --lora_checkpoint "./models/train/Wan2.1-VACE-1.3B_lora/step-400.safetensors" \
+  --lora_checkpoint "./models/train/Wan2.1-VACE-1.3B_lora/step-2800.safetensors" \
   --lora_base_model "vace" \
-  --lora_target_modules "self_attn.q,self_attn.k,self_attn.v,self_attn.o" \
+  --lora_target_modules "q,k,v,o,ffn.0,ffn.2" \
   --lora_rank 8 \
   --extra_inputs "vace_video,vace_ref_img" \
   --use_gradient_checkpointing_offload
