@@ -50,15 +50,21 @@ class BatchLoRAInference:
         self.pipe = None
         self.default_params = {}
     
-    def load_pipeline(self):
-        """Load or reload the pipeline with LoRA"""
-        print("Loading pipeline...")
+    def load_pipeline(self, lora_alpha: float = None):
+        """
+        Load or reload the pipeline with LoRA
+        
+        Args:
+            lora_alpha: LoRA alpha value (uses instance value if not provided)
+        """
+        alpha = lora_alpha if lora_alpha is not None else self.lora_alpha
+        print(f"Loading pipeline with LoRA alpha={alpha}...")
         self.pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=self.torch_dtype,
             device=self.device,
             model_configs=self.model_configs,
         )
-        self.pipe.load_lora(self.pipe.vace, self.lora_path, alpha=self.lora_alpha)
+        self.pipe.load_lora(self.pipe.vace, self.lora_path, alpha=alpha)
         print("Pipeline loaded successfully")
     
     def unload_pipeline(self):
@@ -185,6 +191,35 @@ class BatchLoRAInference:
         finally:
             wandb.finish()
     
+    def run_lora_alpha_tests(self, lora_alphas: list, fixed_cfg_scale: float, fixed_steps: int, fixed_shift: float):
+        """
+        Test with different LoRA alpha values
+        
+        Args:
+            lora_alphas: List of LoRA alpha values to test
+            fixed_cfg_scale: Fixed guidance scale for all runs
+            fixed_steps: Fixed number of inference steps for all runs
+            fixed_shift: Fixed sigma shift value for all runs
+        """
+        print("\n" + "="*70)
+        print("TEST 1: LoRA Alpha Variations")
+        print("="*70)
+        
+        for alpha in lora_alphas:
+            # Reload pipeline with new alpha
+            self.unload_pipeline()
+            self.load_pipeline(lora_alpha=alpha)
+            
+            self.run_inference(
+                test_name="test1_lora_alpha",
+                config_name=f"lora_alpha_{alpha}",
+                override_params={
+                    "cfg_scale": fixed_cfg_scale,
+                    "num_inference_steps": fixed_steps,
+                    "sigma_shift": fixed_shift,
+                }
+            )
+    
     def run_guidance_scale_tests(self, guide_scales: list, fixed_steps: int, fixed_shift: float):
         """
         Test with different guidance scale values
@@ -195,12 +230,12 @@ class BatchLoRAInference:
             fixed_shift: Fixed sigma shift value for all runs
         """
         print("\n" + "="*70)
-        print("TEST 1: Guidance Scale Variations")
+        print("TEST 2: Guidance Scale Variations")
         print("="*70)
         
         for scale in guide_scales:
             self.run_inference(
-                test_name="test1_guidance",
+                test_name="test2_guidance",
                 config_name=f"guide_scale_{scale}",
                 override_params={
                     "cfg_scale": scale,
@@ -219,12 +254,12 @@ class BatchLoRAInference:
             fixed_shift: Fixed sigma shift value for all runs
         """
         print("\n" + "="*70)
-        print("TEST 2: Sampling Steps Variations")
+        print("TEST 3: Sampling Steps Variations")
         print("="*70)
         
         for steps in sampling_steps:
             self.run_inference(
-                test_name="test2_steps",
+                test_name="test3_steps",
                 config_name=f"sample_steps_{steps}",
                 override_params={
                     "cfg_scale": fixed_cfg_scale,
@@ -243,12 +278,12 @@ class BatchLoRAInference:
             fixed_steps: Fixed number of inference steps for all runs
         """
         print("\n" + "="*70)
-        print("TEST 3: Sample Shift Variations")
+        print("TEST 4: Sample Shift Variations")
         print("="*70)
         
         for shift in sample_shifts:
             self.run_inference(
-                test_name="test3_shift",
+                test_name="test4_shift",
                 config_name=f"sample_shift_{int(shift)}",
                 override_params={
                     "cfg_scale": fixed_cfg_scale,
@@ -268,12 +303,12 @@ class BatchLoRAInference:
             fixed_shift: Fixed sigma shift value for all runs
         """
         print("\n" + "="*70)
-        print("TEST 4: Prompt Variations")
+        print("TEST 5: Prompt Variations")
         print("="*70)
         
         for i, prompt in enumerate(prompts, 1):
             self.run_inference(
-                test_name="test4_prompt_variations",
+                test_name="test5_prompt_variations",
                 config_name=f"prompt_{i}",
                 override_params={
                     "prompt": prompt,

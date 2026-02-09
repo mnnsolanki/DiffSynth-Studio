@@ -47,6 +47,7 @@ FIXED_STEPS = 50
 FIXED_SHIFT = 16.0
 
 # Test configurations
+LORA_ALPHAS = [0.3, 0.7, 1.0, 1.5]
 GUIDANCE_SCALES = [3.0, 5.0, 7.5]
 SAMPLING_STEPS = [20, 30, 50]
 SAMPLE_SHIFTS = [8.0, 16.0]
@@ -70,6 +71,7 @@ PROMPT_VARIATIONS = [
 ]
 
 # Which tests to run
+RUN_LORA_ALPHA_TESTS = True
 RUN_GUIDANCE_TESTS = True
 RUN_STEPS_TESTS = True
 RUN_SHIFT_TESTS = True
@@ -109,9 +111,21 @@ def main():
     })
     
     # Run tests
-    batch_runner.load_pipeline()
-    
     try:
+        if RUN_LORA_ALPHA_TESTS:
+            batch_runner.run_lora_alpha_tests(
+                lora_alphas=LORA_ALPHAS,
+                fixed_cfg_scale=FIXED_CFG_SCALE,
+                fixed_steps=FIXED_STEPS,
+                fixed_shift=FIXED_SHIFT
+            )
+            # Reload pipeline with default alpha for subsequent tests
+            if any([RUN_GUIDANCE_TESTS, RUN_STEPS_TESTS, RUN_SHIFT_TESTS, RUN_PROMPT_TESTS]):
+                batch_runner.load_pipeline(lora_alpha=LORA_ALPHA)
+        else:
+            # Load pipeline if not using lora alpha tests
+            batch_runner.load_pipeline(lora_alpha=LORA_ALPHA)
+        
         if RUN_GUIDANCE_TESTS:
             batch_runner.run_guidance_scale_tests(
                 guide_scales=GUIDANCE_SCALES,
@@ -146,6 +160,7 @@ def main():
     
     # Print summary
     total_runs = (
+        (len(LORA_ALPHAS) if RUN_LORA_ALPHA_TESTS else 0) +
         (len(GUIDANCE_SCALES) if RUN_GUIDANCE_TESTS else 0) +
         (len(SAMPLING_STEPS) if RUN_STEPS_TESTS else 0) +
         (len(SAMPLE_SHIFTS) if RUN_SHIFT_TESTS else 0) +
